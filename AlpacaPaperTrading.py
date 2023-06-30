@@ -1,3 +1,5 @@
+# Disclaimer: Nothing herein is financial advice, and NOT a recommendation to trade real money. Many platforms exist for simulated trading (paper trading) which can be used for building and developing the methods discussed. Please use common sense and always first consult a professional before trading or investing.
+# Setup Alpaca Paper trading environment
 from __future__ import annotations
 
 import datetime
@@ -5,13 +7,15 @@ import threading
 import time
 
 import alpaca_trade_api as tradeapi
-import gymnasium as gym
+import gym
 import numpy as np
 import pandas as pd
 import torch
 
-from finrl.meta.data_processors.processor_alpaca import AlpacaProcessor
-
+from AlpacaProcessor import AlpacaProcessor
+from finrl.meta.paper_trading.common import AgentPPO
+from finrl.config import TRAINED_MODEL_DIR
+import itertools
 
 class AlpacaPaperTrading:
     def __init__(
@@ -32,91 +36,73 @@ class AlpacaPaperTrading:
         max_stock=1e2,
         latency=None,
     ):
-
-        self.TRAINED_MODEL_DIR = "trained_models"
+        self.ticker_list = ticker_list
+        self.tech_indicator_list = tech_indicator_list
         # load agent
         self.drl_lib = drl_lib
+        if agent == "ppo":
+            if drl_lib == "elegantrl":
+                agent_class = AgentPPO
+                agent = agent_class(net_dim, state_dim, action_dim)
+                actor = agent.act
+                # load agent
+                try:
+                    cwd = cwd + "/actor.pth"
+                    print(f"| load actor from: {cwd}")
+                    actor.load_state_dict(
+                        torch.load(cwd, map_location=lambda storage, loc: storage)
+                    )
+                    self.act = actor
+                    self.device = agent.device
+                except BaseException:
+                    raise ValueError("Fail to load agent!")
 
-        if drl_lib == "stable_baselines3":
-            from stable_baselines3 import A2C, DDPG, PPO, SAC, TD3
+            elif drl_lib == "rllib":
+                from ray.rllib.agents import ppo
+                from ray.rllib.agents.ppo.ppo import PPOTrainer
 
-            try:
-                if agent == "A2C":
-                    self.model = A2C.load(self.TRAINED_MODEL_DIR + "/agent_a2c") 
-                elif agent == "PPO":
-                    self.model = PPO.load(self.TRAINED_MODEL_DIR + "/agent_ppo") 
-                elif agent == "DDPG":
-                    self.model = DDPG.load(self.TRAINED_MODEL_DIR + "/agent_ddpg") 
-                elif agent == "TD3":
-                    self.model = TD3.load(self.TRAINED_MODEL_DIR + "/agent_td3") 
-                elif agent == "SAC":
-                    self.model = SAC.load(self.TRAINED_MODEL_DIR + "/agent_sac")                     
-                print("Successfully load model", cwd)
-            except:
-                raise ValueError("Fail to load agent!")
-        else:
-            if agent == "ppo":
-                if drl_lib == "elegantrl":
-                    from elegantrl.agents import AgentPPO
-                    from elegantrl.train.run import init_agent
-                    from elegantrl.train.config import (
-                        Arguments,
-                    )  # bug fix:ModuleNotFoundError: No module named 'elegantrl.run'
-
-                    # load agent
-                    config = {
-                        "state_dim": state_dim,
-                        "action_dim": action_dim,
-                    }
-                    args = Arguments(agent_class=AgentPPO, env=StockEnvEmpty(config))
-                    args.cwd = cwd
-                    args.net_dim = net_dim
-                    # load agent
-                    try:
-                        agent = init_agent(args, gpu_id=0)
-                        self.act = agent.act
-                        self.device = agent.device
-                    except BaseException:
-                        raise ValueError("Fail to load agent!")
-
-                elif drl_lib == "rllib":
-                    from ray.rllib.agents import ppo
-                    from ray.rllib.agents.ppo.ppo import PPOTrainer
-
-                    config = ppo.DEFAULT_CONFIG.copy()
-                    config["env"] = StockEnvEmpty
-                    config["log_level"] = "WARN"
-                    config["env_config"] = {
-                        "state_dim": state_dim,
-                        "action_dim": action_dim,
-                    }
-                    trainer = PPOTrainer(env=StockEnvEmpty, config=config)
+                config = ppo.DEFAULT_CONFIG.copy()
+                config["env"] = StockEnvEmpty
+                config["log_level"] = "WARN"
+                config["env_config"] = {
+                    "state_dim": state_dim,
+                    "action_dim": action_dim,
+                }
+                trainer = PPOTrainer(env=StockEnvEmpty, config=config)
+                trainer.restore(cwd)
+                try:
                     trainer.restore(cwd)
-                    try:
-                        trainer.restore(cwd)
-                        self.agent = trainer
-                        print("Restoring from checkpoint path", cwd)
-                    except:
-                        raise ValueError("Fail to load agent!")
-                
-                elif agent == "a2c":
-                    if drl_lib == "stable_baselines3":
-                        from stable_baselines3 import A2C
+                    self.agent = trainer
+                    print("Restoring from checkpoint path", cwd)
+                except:
+                    raise ValueError("Fail to load agent!")
 
-                        try:
-                            # load agent
-                            self.model = A2C.load(cwd)
-                            print("Successfully load model", cwd)
-                        except:
-                            raise ValueError("Fail to load agent!")
-                    else:
-                        raise ValueError(
-                            "The DRL library input is NOT supported yet. Please check your input."
-                        )
-                else:
-                    raise ValueError("Agent input is NOT supported yet.")
+            elif drl_lib == "stable_baselines3":
+                from stable_baselines3 import PPO
 
-        
+                try:
+                    # load agent
+                    self.model = PPO.load(cwd)
+                    print("Successfully load model", cwd)
+                except:
+                    raise ValueError("Fail to load agent!")
+
+            else:
+                raise ValueError(
+                    "The DRL library input is NOT supported yet. Please check your input."
+                )
+        elif agent == 'DDPG':
+            if drl_lib == "stable_baselines3":
+                from stable_baselines3 import DDPG
+
+                try:
+                    # load agent
+                    self.model = DDPG.load(TRAINED_MODEL_DIR + "/agent_ddpg")
+                    print("Successfully load model", cwd)
+                except:
+                    raise ValueError("Fail to load agent!")
+        else:
+            raise ValueError("Agent input is NOT supported yet.")
 
         # connect to Alpaca trading API
         try:
@@ -137,10 +123,6 @@ class AlpacaPaperTrading:
             self.time_interval = 60 * 5
         elif time_interval == "15Min":
             self.time_interval = 60 * 15
-        elif (
-            time_interval == "1D"
-        ):  # bug fix:1D ValueError: Time interval input is NOT supported yet. Maybe any other better ways
-            self.time_interval = 24 * 60 * 60
         else:
             raise ValueError("Time interval input is NOT supported yet.")
 
@@ -175,15 +157,14 @@ class AlpacaPaperTrading:
         return latency
 
     def run(self):
+                        
         orders = self.alpaca.list_orders(status="open")
         for order in orders:
             self.alpaca.cancel_order(order.id)
 
         # Wait for market to open.
         print("Waiting for market to open...")
-        tAMO = threading.Thread(target=self.awaitMarketOpen)
-        tAMO.start()
-        tAMO.join()
+        self.awaitMarketOpen()
         print("Market opened.")
         while True:
             # Figure out when the market will close so we can prepare to sell beforehand.
@@ -194,34 +175,35 @@ class AlpacaPaperTrading:
             currTime = clock.timestamp.replace(tzinfo=datetime.timezone.utc).timestamp()
             self.timeToClose = closingTime - currTime
 
-            if self.timeToClose < (60):
-                # Close all positions when 1 minutes til market close.
-                print("Market closing soon. Stop trading.")
-                break
+            if self.timeToClose < (60 * 2):
+                # Close all positions when 2 minutes til market close.  Any less and it will be in danger of not closing positions in time.
 
-                """# Close all positions when 1 minutes til market close.
-            print("Market closing soon.  Closing positions.")
+                print("Market closing soon.  Closing positions.")
 
-            positions = self.alpaca.list_positions()
-            for position in positions:
-              if(position.side == 'long'):
-                orderSide = 'sell'
-              else:
-                orderSide = 'buy'
-              qty = abs(int(float(position.qty)))
-              respSO = []
-              tSubmitOrder = threading.Thread(target=self.submitOrder(qty, position.symbol, orderSide, respSO))
-              tSubmitOrder.start()
-              tSubmitOrder.join()
+                threads = []
+                positions = self.alpaca.list_positions()
+                for position in positions:
+                    if position.side == "long":
+                        orderSide = "sell"
+                    else:
+                        orderSide = "buy"
+                    qty = abs(int(float(position.qty)))
+                    respSO = []
+                    tSubmitOrder = threading.Thread(
+                        target=self.submitOrder(qty, position.symbol, orderSide, respSO)
+                    )
+                    tSubmitOrder.start()
+                    threads.append(tSubmitOrder)  # record thread for joining later
 
-            # Run script again after market close for next trading day.
-            print("Sleeping until market close (15 minutes).")
-            time.sleep(60 * 15)"""
+                for x in threads:  #  wait for all threads to complete
+                    x.join()
+
+                # Run script again after market close for next trading day.
+                print("Sleeping until market close (15 minutes).")
+                time.sleep(60 * 15)
 
             else:
-                trade = threading.Thread(target=self.trade)
-                trade.start()
-                trade.join()
+                self.trade()
                 last_equity = float(self.alpaca.get_account().last_equity)
                 cur_time = time.time()
                 self.equities.append([cur_time, last_equity])
@@ -248,7 +230,6 @@ class AlpacaPaperTrading:
                 s_tensor = torch.as_tensor((state,), device=self.device)
                 a_tensor = self.act(s_tensor)
                 action = a_tensor.detach().cpu().numpy()[0]
-
             action = (action * self.max_stock).astype(int)
 
         elif self.drl_lib == "rllib":
@@ -261,24 +242,32 @@ class AlpacaPaperTrading:
             raise ValueError(
                 "The DRL library input is NOT supported yet. Please check your input."
             )
-
+        
         self.stocks_cd += 1
+        print(action)
+        print('stocks_cd: ' + str(self.stocks_cd))
         if self.turbulence_bool == 0:
             min_action = 10  # stock_cd
+            threads = []
             for index in np.where(action < -min_action)[0]:  # sell_index:
                 sell_num_shares = min(self.stocks[index], -action[index])
                 qty = abs(int(sell_num_shares))
                 respSO = []
+                print('Vendemos: ' + str(qty)  + ' acciones de' + self.stockUniverse[index])
                 tSubmitOrder = threading.Thread(
                     target=self.submitOrder(
-                        qty, self.stockUniverse[index], "sell", respSO
+                        qty, self.stockUniverse[index], 'sell', respSO
                     )
                 )
                 tSubmitOrder.start()
-                tSubmitOrder.join()
+                threads.append(tSubmitOrder)  # record thread for joining later
                 self.cash = float(self.alpaca.get_account().cash)
                 self.stocks_cd[index] = 0
 
+            for x in threads:  #  wait for all threads to complete
+                x.join()
+
+            threads = []
             for index in np.where(action > min_action)[0]:  # buy_index:
                 if self.cash < 0:
                     tmp_cash = 0
@@ -287,19 +276,27 @@ class AlpacaPaperTrading:
                 buy_num_shares = min(
                     tmp_cash // self.price[index], abs(int(action[index]))
                 )
-                qty = abs(int(buy_num_shares))
+                if buy_num_shares != buy_num_shares:  # if buy_num_change = nan
+                    qty = 0  # set to 0 quantity
+                else:
+                    qty = abs(int(buy_num_shares))
                 respSO = []
+                print('Compramos: ' + str(qty) + ' acciones de' + self.stockUniverse[index])
                 tSubmitOrder = threading.Thread(
                     target=self.submitOrder(
                         qty, self.stockUniverse[index], "buy", respSO
                     )
                 )
                 tSubmitOrder.start()
-                tSubmitOrder.join()
+                threads.append(tSubmitOrder)  # record thread for joining later
                 self.cash = float(self.alpaca.get_account().cash)
                 self.stocks_cd[index] = 0
 
+            for x in threads:  #  wait for all threads to complete
+                x.join()
+
         else:  # sell all when turbulence
+            threads = []
             positions = self.alpaca.list_positions()
             for position in positions:
                 if position.side == "long":
@@ -312,17 +309,22 @@ class AlpacaPaperTrading:
                     target=self.submitOrder(qty, position.symbol, orderSide, respSO)
                 )
                 tSubmitOrder.start()
-                tSubmitOrder.join()
+                threads.append(tSubmitOrder)  # record thread for joining later
+
+            for x in threads:  #  wait for all threads to complete
+                x.join()
 
             self.stocks_cd[:] = 0
 
     def get_state(self):
         alpaca = AlpacaProcessor(api=self.alpaca)
-        price, tech, turbulence = alpaca.fetch_latest_data(
+
+        price, tech, turbulence, lastdata_df = alpaca.fetch_latest_data(
             ticker_list=self.stockUniverse,
-            time_interval="1Min",
-            tech_indicator_list=self.tech_indicator_list,
+            time_interval='1Min',
+            tech_indicator_list=self.tech_indicator_list
         )
+
         turbulence_bool = 1 if turbulence >= self.turbulence_thresh else 0
 
         turbulence = (
@@ -332,12 +334,14 @@ class AlpacaPaperTrading:
         tech = tech * 2**-7
         positions = self.alpaca.list_positions()
         stocks = [0] * len(self.stockUniverse)
+
         for position in positions:
             ind = self.stockUniverse.index(position.symbol)
             stocks[ind] = abs(int(float(position.qty)))
 
         stocks = np.asarray(stocks, dtype=float)
         cash = float(self.alpaca.get_account().cash)
+
         self.cash = cash
         self.stocks = stocks
         self.turbulence_bool = turbulence_bool
@@ -345,18 +349,29 @@ class AlpacaPaperTrading:
 
         amount = np.array(self.cash * (2**-12), dtype=np.float32)
         scale = np.array(2**-6, dtype=np.float32)
-        state = np.hstack(
-            (
-                amount,
-                turbulence,
-                self.turbulence_bool,
-                price * scale,
-                self.stocks * scale,
-                self.stocks_cd,
-                tech,
-            )
-        ).astype(np.float32)
-        print(len(self.stockUniverse))
+        
+        stock_dimension = len(self.ticker_list)
+        num_stock_shares = [0] * stock_dimension
+         
+        lastdata_df.to_csv('lastdata_df.csv')   
+        
+        state = (                    
+                    [50000]
+                    + lastdata_df.close.values.tolist()
+                    + num_stock_shares
+                    + sum(
+                        (
+                            lastdata_df[tech].values.tolist()
+                            for tech in self.tech_indicator_list
+                        ),
+                        [],
+                    )
+                )  # append initial stocks_share to initial state, instead of all zero
+        
+        state = np.array(state)
+        state[np.isnan(state)] = 0.0
+        state[np.isinf(state)] = 0.0
+        
         return state
 
     def submitOrder(self, qty, stock, side, resp):
@@ -385,6 +400,7 @@ class AlpacaPaperTrading:
                 )
                 resp.append(False)
         else:
+            """
             print(
                 "Quantity is 0, order of | "
                 + str(qty)
@@ -394,6 +410,7 @@ class AlpacaPaperTrading:
                 + side
                 + " | not completed."
             )
+            """
             resp.append(True)
 
     @staticmethod
@@ -423,7 +440,12 @@ class StockEnvEmpty(gym.Env):
             low=-1, high=1, shape=(action_dim,), dtype=np.float32
         )
 
-    def reset(self):
+    def reset(
+        self,
+        *,
+        seed=None,
+        options=None,
+    ):
         return
 
     def step(self, actions):

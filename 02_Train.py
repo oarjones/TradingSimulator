@@ -6,9 +6,12 @@ from finrl.config import INDICATORS, TRAINED_MODEL_DIR, RESULTS_DIR
 from finrl.main import check_and_make_directories
 from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
 
+
+
 check_and_make_directories([TRAINED_MODEL_DIR])
 
 train = pd.read_csv('train_data.csv')
+
 
 # If you are not using the data generated from part 1 of this tutorial, make sure 
 # it has the columns and index in the form that could be make into the environment. 
@@ -16,7 +19,24 @@ train = pd.read_csv('train_data.csv')
 train = train.set_index(train.columns[0])
 train.index.names = ['']
 
+
 stock_dimension = len(train.tic.unique())
+
+
+## Calcular la longitud de los registros para cada fecha/hora
+#train['record_length'] = train.groupby('date')['tic'].transform('count')
+
+## Eliminar los registros del DataFrame original
+#train = train[train['record_length'] == stock_dimension]
+
+## Eliminar la columna 'record_length' si ya no es necesaria
+#train = train.drop('record_length', axis=1)
+
+#train['index'] = train.groupby('date').ngroup()
+#train.set_index('index', inplace=True)
+
+print(train.head(40))
+
 state_space = 1 + 2*stock_dimension + len(INDICATORS)*stock_dimension
 print(f"Stock Dimension: {stock_dimension}, State Space: {state_space}")
 
@@ -25,7 +45,7 @@ num_stock_shares = [0] * stock_dimension
 
 env_kwargs = {
     "hmax": 100,
-    "initial_amount": 1000000,
+    "initial_amount": 50000,
     "num_stock_shares": num_stock_shares,
     "buy_cost_pct": buy_cost_list,
     "sell_cost_pct": sell_cost_list,
@@ -46,11 +66,11 @@ print(type(env_train))
 agent = DRLAgent(env = env_train)
 
 # Set the corresponding values to 'True' for the algorithms that you want to use
-if_using_a2c = True
+if_using_a2c = False
 if_using_ddpg = True
-if_using_ppo = True
-if_using_td3 = True
-if_using_sac = True
+if_using_ppo = False
+if_using_td3 = False
+if_using_sac = False
 
 
 
