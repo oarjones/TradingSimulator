@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytz
 from stockstats import StockDataFrame as Sdf
-
+from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
 
 class AlpacaProcessor:
     def __init__(self, API_KEY=None, API_SECRET=None, API_BASE_URL=None, api=None):
@@ -315,6 +315,8 @@ class AlpacaProcessor:
     ) -> pd.DataFrame:
         data_df = pd.DataFrame()
         lastdata_df = pd.DataFrame()
+        
+
         for tic in ticker_list:
             barset = self.api.get_bars([tic], time_interval, limit=limit).df  # [tic]
             barset["tic"] = tic
@@ -325,7 +327,36 @@ class AlpacaProcessor:
             barset1 = barset1.reset_index()
             lastdata_df = pd.concat([lastdata_df, barset1])
 
+        
+
+        NY = "America/New_York"
+        lastdata_df["timestamp"] = lastdata_df["timestamp"].apply(lambda x: x.tz_convert(NY))
+        lastdata_df = lastdata_df.set_index("timestamp")
+        lastdata_df = lastdata_df.drop('symbol', axis=1)        
         lastdata_df = lastdata_df.reset_index()
+        
+
+        print(lastdata_df.columns)
+        lastdata_df.columns = [
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                'trade_count', 
+                'vwap',
+                "tic",
+            ]
+    
+        lastdata_df["date"] = lastdata_df.date.apply(lambda x: x.strftime("%Y-%m-%d %H:%M:%S"))    
+        lastdata_df = lastdata_df.dropna()
+        lastdata_df = lastdata_df.reset_index(drop=True)
+        lastdata_df = lastdata_df.sort_values(by=["date", "tic"]).reset_index(drop=True)   
+        lastdata_df = self.add_technical_indicator(lastdata_df, tech_indicator_list)
+        
+
+
         data_df = data_df.reset_index(drop=True)
         start_time = data_df.timestamp.min()
         end_time = data_df.timestamp.max()
@@ -395,9 +426,6 @@ class AlpacaProcessor:
 
         df = self.add_technical_indicator(new_df, tech_indicator_list)
         df["VIXY"] = 0
-        
-        lastdata_df = self.add_technical_indicator(lastdata_df, tech_indicator_list)
-        lastdata_df["VIXY"] = 0
 
         price_array, tech_array, turbulence_array = self.df_to_array(
             df, tech_indicator_list, if_vix=True
@@ -407,10 +435,5 @@ class AlpacaProcessor:
         turb_df = self.api.get_bars(["VIXY"], time_interval, limit=1).df
         latest_turb = turb_df["close"].values
         
-
-        #vix = turb_df[["timestamp", "close"]]
-        #vix.columns = ["timestamp", "VIXY"]
-
-        #lastdata_df = lastdata_df.merge(vix, on="timestamp")
 
         return latest_price, latest_tech, latest_turb, lastdata_df

@@ -70,7 +70,7 @@ def download_data(
         ]
     
     data_df["day"] = data_df["date"].dt.dayofweek
-    data_df["date"] = data_df.date.apply(lambda x: x.strftime("%Y-%m-%d"))
+    data_df["date"] = data_df.date.apply(lambda x: x.strftime("%Y-%m-%d %H:%M:%S"))
 
     
     data_df = data_df.dropna()
@@ -83,14 +83,14 @@ def download_data(
     return data_df
 
 
-TRAIN_START_DATE = '2005-01-01'
-TRAIN_END_DATE = '2023-05-19'
-TRADE_START_DATE = '2023-05-22'
-TRADE_END_DATE = '2023-06-22'
+TRAIN_START_DATE = '2020-01-01'
+TRAIN_END_DATE = '2023-06-23'
+TRADE_START_DATE = '2023-06-26'
+TRADE_END_DATE = '2023-06-30'
 
 
-API_KEY = ""
-API_SECRET = ""
+API_KEY = "PKGUYB2D41YL8QB345ZX"
+API_SECRET = "aFoRfrYAmGn7Bed6eyyaLRPPfXdAwcyITmteLRdq"
 API_BASE_URL = 'https://paper-api.alpaca.markets'
 data_url = 'wss://data.alpaca.markets'
 
@@ -101,8 +101,10 @@ ticker_list = [
 ]
 
 
-df_raw = download_data(ticker_list = ticker_list, start_date = TRAIN_START_DATE, end_date = TRADE_END_DATE, time_interval= '1D',
+df_raw = download_data(ticker_list = ticker_list, start_date = TRAIN_START_DATE, end_date = TRADE_END_DATE, time_interval= '15Min',
                        API_KEY= API_KEY, API_SECRET = API_SECRET, API_BASE_URL=API_BASE_URL)    
+
+df_raw.to_csv('df_raw.csv')
 
 print('Data downladed:\n', df_raw);
 
@@ -115,43 +117,41 @@ fe = FeatureEngineer(use_technical_indicator=True,
 
 processed = fe.preprocess_data(df_raw)
 
-print('Data procesed:\n', processed);
-
+processed.to_csv('processed.csv')
 
 list_ticker = processed["tic"].unique().tolist()
-list_date = list(pd.date_range(processed['date'].min(),processed['date'].max()).astype(str))
-combination = list(itertools.product(list_date,list_ticker))
+#list_date = list(pd.date_range(processed['date'].min(),processed['date'].max()).astype(str))
+#combination = list(itertools.product(list_date,list_ticker))
 
-processed_full = pd.DataFrame(combination,columns=["date","tic"]).merge(processed,on=["date","tic"],how="left")
-processed_full = processed_full[processed_full['date'].isin(processed['date'])]
-processed_full = processed_full.sort_values(['date','tic'])
+#processed_full = pd.DataFrame(combination,columns=["date","tic"]).merge(processed,on=["date","tic"],how="left")
+#processed_full = processed_full[processed_full['date'].isin(processed['date'])]
+#processed_full = processed_full.sort_values(['date','tic'])
+#processed_full = processed_full.fillna(0)
+#stock_dimension = len(processed_full.tic.unique())
 
-processed_full = processed_full.fillna(0)
-
-stock_dimension = len(processed_full.tic.unique())
+processed = processed.fillna(0)
+stock_dimension = len(processed.tic.unique())
 
 # Calcular la longitud de los registros para cada fecha/hora
-processed_full['record_length'] = processed_full.groupby('date')['tic'].transform('count')
+processed['record_length'] = processed.groupby('date')['tic'].transform('count')
 
 # Eliminar los registros del DataFrame original
-train = processed_full[processed_full['record_length'] == stock_dimension]
+processed = processed[processed['record_length'] == stock_dimension]
 
 # Eliminar la columna 'record_length' si ya no es necesaria
-processed_full = processed_full.drop('record_length', axis=1)
+processed = processed.drop('record_length', axis=1)
 
 #Crear index agrupando por columna date (fecha\hora)
-processed_full['index'] = processed_full.groupby('date').ngroup()
-processed_full.set_index('index', inplace=True)
-
-processed_full.head()
-
-processed_full.to_csv('processed_full.csv')
+processed['index'] = processed.groupby('date').ngroup()
+processed.set_index('index', inplace=True)
+print(processed.head())
+processed.to_csv('final.csv')
 
 
 
 
-train = data_split(processed_full, TRAIN_START_DATE,TRAIN_END_DATE)
-trade = data_split(processed_full, TRADE_START_DATE,TRADE_END_DATE)
+train = data_split(processed, TRAIN_START_DATE,TRAIN_END_DATE)
+trade = data_split(processed, TRADE_START_DATE,TRADE_END_DATE)
 print(len(train))
 print(len(trade))
 

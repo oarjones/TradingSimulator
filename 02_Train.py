@@ -66,11 +66,11 @@ print(type(env_train))
 agent = DRLAgent(env = env_train)
 
 # Set the corresponding values to 'True' for the algorithms that you want to use
-if_using_a2c = False
+if_using_a2c = True
 if_using_ddpg = True
-if_using_ppo = False
-if_using_td3 = False
-if_using_sac = False
+if_using_ppo = True
+if_using_td3 = True
+if_using_sac = True
 
 
 

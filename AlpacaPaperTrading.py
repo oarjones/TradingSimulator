@@ -16,6 +16,9 @@ from AlpacaProcessor import AlpacaProcessor
 from finrl.meta.paper_trading.common import AgentPPO
 from finrl.config import TRAINED_MODEL_DIR
 import itertools
+import ta
+import random
+
 
 class AlpacaPaperTrading:
     def __init__(
@@ -36,6 +39,10 @@ class AlpacaPaperTrading:
         max_stock=1e2,
         latency=None,
     ):
+        
+        self.CASH_THRESHOLD = 15000 # Cash threshold for buying/selling
+        self.BUY_THRESHOLD = 500;
+
         self.ticker_list = ticker_list
         self.tech_indicator_list = tech_indicator_list
         # load agent
@@ -92,7 +99,7 @@ class AlpacaPaperTrading:
                     "The DRL library input is NOT supported yet. Please check your input."
                 )
         elif agent == 'DDPG':
-            if drl_lib == "stable_baselines3":
+            if drl_lib == "stable_baselines3":                
                 from stable_baselines3 import DDPG
 
                 try:
@@ -101,6 +108,35 @@ class AlpacaPaperTrading:
                     print("Successfully load model", cwd)
                 except:
                     raise ValueError("Fail to load agent!")
+
+        elif agent == "A2C":
+            from stable_baselines3 import A2C
+
+            try:
+                # load agent
+                self.model = A2C.load(TRAINED_MODEL_DIR + "/agent_a2c")
+                print("Successfully load model", cwd)
+            except:
+                raise ValueError("Fail to load agent!")      
+        elif agent == "*":
+            from stable_baselines3 import A2C
+            from stable_baselines3 import DDPG
+            from stable_baselines3 import SAC
+
+            try:
+                # load agent
+                model_a2c = A2C.load(TRAINED_MODEL_DIR + "/agent_a2c")
+                model_ddpg = DDPG.load(TRAINED_MODEL_DIR + "/agent_ddpg")
+                model_sac = SAC.load(TRAINED_MODEL_DIR + "/agent_sac")
+
+                self.models = [model_a2c, model_ddpg, model_sac]
+
+                print("Successfully load model", cwd)
+            except:
+                raise ValueError("Fail to load agent!")   
+        
+
+
         else:
             raise ValueError("Agent input is NOT supported yet.")
 
@@ -156,58 +192,91 @@ class AlpacaPaperTrading:
         print("latency for data processing: ", latency)
         return latency
 
-    def run(self):
-                        
+    def current_executing_orders(self):
+         # Obtener todas las órdenes activas
+        orders = self.alpaca.list_orders(status='filled')
+
+        # Crear una lista para almacenar los símbolos únicos de las órdenes activas
+        symbols = []
+
+        # Recorrer las órdenes y obtener los símbolos
+        for order in orders:
+            symbols.append(order.symbol)
+
+        # Imprimir los símbolos únicos de las órdenes activas
+        unique_symbols = list(set(symbols))
+        return unique_symbols
+
+    
+
+    def run(self):               
+        
+        
+
         orders = self.alpaca.list_orders(status="open")
+        
         for order in orders:
             self.alpaca.cancel_order(order.id)
 
-        # Wait for market to open.
-        print("Waiting for market to open...")
-        self.awaitMarketOpen()
-        print("Market opened.")
-        while True:
-            # Figure out when the market will close so we can prepare to sell beforehand.
-            clock = self.alpaca.get_clock()
-            closingTime = clock.next_close.replace(
-                tzinfo=datetime.timezone.utc
-            ).timestamp()
-            currTime = clock.timestamp.replace(tzinfo=datetime.timezone.utc).timestamp()
-            self.timeToClose = closingTime - currTime
 
-            if self.timeToClose < (60 * 2):
-                # Close all positions when 2 minutes til market close.  Any less and it will be in danger of not closing positions in time.
+        self.trade()
+        last_equity = float(self.alpaca.get_account().last_equity)
+        cur_time = time.time()
+        self.equities.append([cur_time, last_equity])
+        time.sleep(self.time_interval)
+            
 
-                print("Market closing soon.  Closing positions.")
 
-                threads = []
-                positions = self.alpaca.list_positions()
-                for position in positions:
-                    if position.side == "long":
-                        orderSide = "sell"
-                    else:
-                        orderSide = "buy"
-                    qty = abs(int(float(position.qty)))
-                    respSO = []
-                    tSubmitOrder = threading.Thread(
-                        target=self.submitOrder(qty, position.symbol, orderSide, respSO)
-                    )
-                    tSubmitOrder.start()
-                    threads.append(tSubmitOrder)  # record thread for joining later
 
-                for x in threads:  #  wait for all threads to complete
-                    x.join()
 
-                # Run script again after market close for next trading day.
-                print("Sleeping until market close (15 minutes).")
-                time.sleep(60 * 15)
+        ## Wait for market to open.
+        #print("Waiting for market to open...")
+        #self.awaitMarketOpen()
+        
 
-            else:
-                self.trade()
-                last_equity = float(self.alpaca.get_account().last_equity)
-                cur_time = time.time()
-                self.equities.append([cur_time, last_equity])
-                time.sleep(self.time_interval)
+        #print("Market opened.")
+        #while True:
+        #    # Figure out when the market will close so we can prepare to sell beforehand.
+        #    clock = self.alpaca.get_clock()
+        #    closingTime = clock.next_close.replace(
+        #        tzinfo=datetime.timezone.utc
+        #    ).timestamp()
+        #    currTime = clock.timestamp.replace(tzinfo=datetime.timezone.utc).timestamp()
+        #    self.timeToClose = closingTime - currTime
+
+        #    if self.timeToClose < (60 * 5):
+        #        # Close all positions when 5 minutes til market close.  Any less and it will be in danger of not closing positions in time.
+
+        #        print("Market closing soon.  Closing positions.")
+
+        #        threads = []
+        #        positions = self.alpaca.list_positions()
+        #        for position in positions:
+        #            if position.side == "long":
+        #                orderSide = "sell"
+        #            else:
+        #                orderSide = "buy"
+        #            qty = abs(int(float(position.qty)))
+        #            respSO = []
+        #            tSubmitOrder = threading.Thread(
+        #                target=self.submitOrder(qty, position.symbol, orderSide, respSO)
+        #            )
+        #            tSubmitOrder.start()
+        #            threads.append(tSubmitOrder)  # record thread for joining later
+
+        #        for x in threads:  #  wait for all threads to complete
+        #            x.join()
+
+        #        # Run script again after market close for next trading day.
+        #        print("Sleeping until market close (15 minutes).")
+        #        time.sleep(60 * 15)
+
+        #    else:
+        #        self.trade()
+        #        last_equity = float(self.alpaca.get_account().last_equity)
+        #        cur_time = time.time()
+        #        self.equities.append([cur_time, last_equity])
+        #        time.sleep(self.time_interval)
 
     def awaitMarketOpen(self):
         isOpen = self.alpaca.get_clock().is_open
@@ -222,75 +291,104 @@ class AlpacaPaperTrading:
             time.sleep(60)
             isOpen = self.alpaca.get_clock().is_open
 
+    def get_decision(self, state):
+        predictions = []
+        weights = [0.7, 0.9, 0.8]  # Adjust weights based on your preference A2C --> 0.7, DDPG --> 0.9, SAC --> 0.8
+    
+
+        for model in self.models:
+            prediction = model.predict(state)[0]
+            predictions.append(prediction)
+    
+        weighted_avg = sum(weight * pred for weight, pred in zip(weights, predictions))
+        return weighted_avg
+    
+
+    
+
+
+
+    
+    
+
     def trade(self):
-        state = self.get_state()
-
-        if self.drl_lib == "elegantrl":
-            with torch.no_grad():
-                s_tensor = torch.as_tensor((state,), device=self.device)
-                a_tensor = self.act(s_tensor)
-                action = a_tensor.detach().cpu().numpy()[0]
-            action = (action * self.max_stock).astype(int)
-
-        elif self.drl_lib == "rllib":
-            action = self.agent.compute_single_action(state)
-
-        elif self.drl_lib == "stable_baselines3":
-            action = self.model.predict(state)[0]
-
-        else:
-            raise ValueError(
-                "The DRL library input is NOT supported yet. Please check your input."
-            )
         
-        self.stocks_cd += 1
-        print(action)
-        print('stocks_cd: ' + str(self.stocks_cd))
+        cash = float(self.alpaca.get_account().cash)        
+
+        state = self.get_state()
+        
+        predictions = []
+        weights = [0.7, 0.9, 0.8]  # Adjust weights based on your preference A2C --> 0.7, DDPG --> 0.9, SAC --> 0.8
+        for model in self.models:
+            prediction = model.predict(state)[0]
+            predictions.append(prediction)
+
+        ddpg_prediction = predictions[1]
+        
+        self.stocks_cd += 1        
+
         if self.turbulence_bool == 0:
-            min_action = 10  # stock_cd
+
             threads = []
-            for index in np.where(action < -min_action)[0]:  # sell_index:
-                sell_num_shares = min(self.stocks[index], -action[index])
-                qty = abs(int(sell_num_shares))
-                respSO = []
-                print('Vendemos: ' + str(qty)  + ' acciones de' + self.stockUniverse[index])
-                tSubmitOrder = threading.Thread(
-                    target=self.submitOrder(
-                        qty, self.stockUniverse[index], 'sell', respSO
+            for index in range(len(ddpg_prediction)):
+                tic = self.stockUniverse[index];
+                action = ddpg_prediction[index]
+
+                #Vender acciones
+                if action == -1:                     
+                        
+                    sell_num_shares = self.stocks[index]
+                    qty = abs(int(sell_num_shares))
+
+                    if qty > 0:
+                        respSO = []
+                        tSubmitOrder = threading.Thread(
+                            target=self.submitOrder(
+                                qty, self.stockUniverse[index], 'sell', respSO
+                            )
+                        )
+                        tSubmitOrder.start()
+                        threads.append(tSubmitOrder)  # record thread for joining later
+                    
+                    self.cash = float(self.alpaca.get_account().cash)
+                    self.stocks_cd[index] = 0
+
+                #Comprar acciones
+                elif action == 1:
+                    
+                    #if cash < self.CASH_THRESHOLD:
+                    #    print("Insufficient cash. Waiting for more funds.")
+                    #    return
+
+                    if self.cash < 0:
+                        tmp_cash = 0
+                    else:
+                        tmp_cash = self.cash                        
+
+                    
+                    #buy_num_shares = min(
+                    #    tmp_cash // self.price[index], abs(int(action*self.max_stock))
+                    #)
+
+                    buy_num_shares = min(
+                        tmp_cash // self.price[index],  # Número máximo de acciones según el cash
+                        self.BUY_THRESHOLD // self.price[index]  # Número máximo de acciones según el límite de compra
                     )
-                )
-                tSubmitOrder.start()
-                threads.append(tSubmitOrder)  # record thread for joining later
-                self.cash = float(self.alpaca.get_account().cash)
-                self.stocks_cd[index] = 0
 
-            for x in threads:  #  wait for all threads to complete
-                x.join()
-
-            threads = []
-            for index in np.where(action > min_action)[0]:  # buy_index:
-                if self.cash < 0:
-                    tmp_cash = 0
-                else:
-                    tmp_cash = self.cash
-                buy_num_shares = min(
-                    tmp_cash // self.price[index], abs(int(action[index]))
-                )
-                if buy_num_shares != buy_num_shares:  # if buy_num_change = nan
-                    qty = 0  # set to 0 quantity
-                else:
                     qty = abs(int(buy_num_shares))
-                respSO = []
-                print('Compramos: ' + str(qty) + ' acciones de' + self.stockUniverse[index])
-                tSubmitOrder = threading.Thread(
-                    target=self.submitOrder(
-                        qty, self.stockUniverse[index], "buy", respSO
-                    )
-                )
-                tSubmitOrder.start()
-                threads.append(tSubmitOrder)  # record thread for joining later
-                self.cash = float(self.alpaca.get_account().cash)
-                self.stocks_cd[index] = 0
+
+                    if qty > 0:
+                        respSO = []
+                        tSubmitOrder = threading.Thread(
+                            target=self.submitOrder(
+                                qty, self.stockUniverse[index], "buy", respSO
+                            )
+                        )
+                        tSubmitOrder.start()
+                        threads.append(tSubmitOrder)  # record thread for joining later
+
+                    self.cash = float(self.alpaca.get_account().cash)
+                    self.stocks_cd[index] = 0
 
             for x in threads:  #  wait for all threads to complete
                 x.join()
@@ -299,6 +397,7 @@ class AlpacaPaperTrading:
             threads = []
             positions = self.alpaca.list_positions()
             for position in positions:
+                #CHATGPT --> Please explain to me the following if:
                 if position.side == "long":
                     orderSide = "sell"
                 else:
@@ -321,7 +420,7 @@ class AlpacaPaperTrading:
 
         price, tech, turbulence, lastdata_df = alpaca.fetch_latest_data(
             ticker_list=self.stockUniverse,
-            time_interval='1Min',
+            time_interval='15Min',
             tech_indicator_list=self.tech_indicator_list
         )
 
@@ -353,7 +452,6 @@ class AlpacaPaperTrading:
         stock_dimension = len(self.ticker_list)
         num_stock_shares = [0] * stock_dimension
          
-        lastdata_df.to_csv('lastdata_df.csv')   
         
         state = (                    
                     [50000]
